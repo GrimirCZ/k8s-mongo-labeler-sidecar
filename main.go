@@ -268,29 +268,29 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 	if !ok {
 		return def, nil
 	}
-
-	func buildMongoURI(address, credentials string) string {
-		if credentials == "" {
-			return "mongodb://" + address
-		}
-		return "mongodb://" + credentials + "@" + address
-	}
-
-	func sanitizeMongoError(err error, credentials string) error {
-		if err == nil || credentials == "" {
-			return err
-		}
-		sanitized := strings.ReplaceAll(err.Error(), credentials, "[REDACTED]")
-		if sanitized == err.Error() {
-			return err
-		}
-		return errors.New(sanitized)
-	}
 	parsed, err := time.ParseDuration(v)
 	if err != nil {
 		return 0, fmt.Errorf("invalid %s value %q: %w", key, v, err)
 	}
 	return parsed, nil
+}
+
+func buildMongoURI(address, credentials string) string {
+	if credentials == "" {
+		return "mongodb://" + address
+	}
+	return "mongodb://" + credentials + "@" + address
+}
+
+func sanitizeMongoError(err error, credentials string) error {
+	if err == nil || credentials == "" {
+		return err
+	}
+	sanitized := strings.ReplaceAll(err.Error(), credentials, "[REDACTED]")
+	if sanitized == err.Error() {
+		return err
+	}
+	return errors.New(sanitized)
 }
 
 func getKubeClientSet() (*kubernetes.Clientset, error) {
