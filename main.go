@@ -276,6 +276,9 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 	return parsed, nil
 }
 
+// buildMongoURI constructs a MongoDB URI from address and optional credentials.
+// credentials may be either "username" or "username:password" and are encoded
+// as URI userinfo.
 func buildMongoURI(address, credentials string) string {
 	uri := &url.URL{
 		Scheme: "mongodb",
@@ -291,6 +294,8 @@ func buildMongoURI(address, credentials string) string {
 	return uri.String()
 }
 
+// mongoCredentialTokens returns credential fragments that may appear in MongoDB
+// error text (raw, encoded, and partial forms) and should be redacted.
 func mongoCredentialTokens(credentials string) []string {
 	if credentials == "" {
 		return nil
@@ -323,8 +328,10 @@ func mongoCredentialTokens(credentials string) []string {
 	return tokens
 }
 
+// sanitizeMongoError redacts credential fragments from err text and returns a
+// sanitized error. If no credential fragment is found, it returns err unchanged.
 func sanitizeMongoError(err error, credentials string) error {
-	if err == nil || credentials == "" {
+	if err == nil {
 		return err
 	}
 	sanitized := err.Error()
