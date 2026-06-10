@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -30,6 +31,7 @@ type Config struct {
 	LabelSelector     string
 	Namespace         string
 	Address           string
+	MongoCredentials  string
 	LabelAll          bool
 	LogLevel          phuslog.Level
 	K8sRequestTimeout time.Duration
@@ -211,6 +213,7 @@ func getConfigFromEnvironment() (*Config, error) {
 		LabelSelector:     labelSelector,
 		Namespace:         envString("NAMESPACE", "default"),
 		Address:           envString("MONGO_ADDRESS", "localhost:27017"),
+		MongoCredentials:  envString("MONGODB_CREDENTIALS", ""),
 		LogLevel:          phuslog.InfoLevel,
 		K8sRequestTimeout: defaultK8sRequestTimeout,
 	}
@@ -264,6 +267,24 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 	v, ok := os.LookupEnv(key)
 	if !ok {
 		return def, nil
+	}
+
+	func buildMongoURI(address, credentials string) string {
+		if credentials == "" {
+			return "mongodb://" + address
+		}
+		return "mongodb://" + credentials + "@" + address
+	}
+
+	func sanitizeMongoError(err error, credentials string) error {
+		if err == nil || credentials == "" {
+			return err
+		}
+		sanitized := strings.ReplaceAll(err.Error(), credentials, "[REDACTED]")
+		if sanitized == err.Error() {
+			return err
+		}
+		return errors.New(sanitized)
 	}
 	parsed, err := time.ParseDuration(v)
 	if err != nil {
@@ -348,26 +369,38 @@ func (l *Labeler) getMongoPrimary() (string, error) {
 func (l *Labeler) fetchHello(ctx context.Context) (bson.M, error) {
 	if l.mongoClient == nil {
 		clientOptions := options.Client().
-			ApplyURI("mongodb://" + l.Config.Address).
+			ApplyURI(buildMongoURI(l.Config.Address, l.Config.MongoCredentials)).
 			SetDirect(true).
 			SetMinPoolSize(1).
 			SetMaxPoolSize(1)
 		client, err := mongo.Connect(clientOptions)
 		if err != nil {
-			return nil, fmt.Errorf("connect to mongo at %q: %w", l.Config.Address, err)
+			return nil, fmt.Errorf(
+				"connect to mongo at %q: %w",
+				l.Config.Address,
+				sanitizeMongoError(err, l.Config.MongoCredentials),
+			)
 		}
 		l.mongoClient = client
 	}
 
 	if err := l.mongoClient.Ping(ctx, nil); err != nil {
-		return nil, fmt.Errorf("ping mongo at %q: %w", l.Config.Address, err)
+		return nil, fmt.Errorf(
+			"ping mongo at %q: %w",
+			l.Config.Address,
+			sanitizeMongoError(err, l.Config.MongoCredentials),
+		)
 	}
 
 	var hello bson.M
 	if err := l.mongoClient.Database("admin").
 		RunCommand(ctx, bson.D{{Key: "hello", Value: 1}}).
 		Decode(&hello); err != nil {
-		return nil, fmt.Errorf("run hello command on mongo at %q: %w", l.Config.Address, err)
+		return nil, fmt.Errorf(
+			"run hello command on mongo at %q: %w",
+			l.Config.Address,
+			sanitizeMongoError(err, l.Config.MongoCredentials),
+		)
 	}
 	return hello, nil
 }

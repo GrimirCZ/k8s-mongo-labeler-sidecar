@@ -28,7 +28,15 @@ type envState struct {
 func setConfigEnv(t *testing.T, env map[string]string) {
 	t.Helper()
 
-	keys := []string{"LABEL_SELECTOR", "NAMESPACE", "MONGO_ADDRESS", "LABEL_ALL", "DEBUG", "K8S_REQUEST_TIMEOUT"}
+	keys := []string{
+		"LABEL_SELECTOR",
+		"NAMESPACE",
+		"MONGO_ADDRESS",
+		"MONGODB_CREDENTIALS",
+		"LABEL_ALL",
+		"DEBUG",
+		"K8S_REQUEST_TIMEOUT",
+	}
 	original := make(map[string]envState, len(keys))
 	for _, key := range keys {
 		value, ok := os.LookupEnv(key)
@@ -100,6 +108,7 @@ func TestGetConfigFromEnvironment(t *testing.T) {
 				"LABEL_SELECTOR":      "app=mongo",
 				"NAMESPACE":           "test-namespace",
 				"MONGO_ADDRESS":       "mongo:27017",
+				"MONGODB_CREDENTIALS": "user:pass",
 				"LABEL_ALL":           "true",
 				"DEBUG":               "true",
 				"K8S_REQUEST_TIMEOUT": "7s",
@@ -108,6 +117,7 @@ func TestGetConfigFromEnvironment(t *testing.T) {
 				LabelSelector:     "app=mongo",
 				Namespace:         "test-namespace",
 				Address:           "mongo:27017",
+				MongoCredentials:  "user:pass",
 				LabelAll:          true,
 				LogLevel:          phuslog.DebugLevel,
 				K8sRequestTimeout: 7 * time.Second,
@@ -134,6 +144,7 @@ func TestGetConfigFromEnvironment(t *testing.T) {
 				LabelSelector:     "app=mongo",
 				Namespace:         "default",
 				Address:           "localhost:27017",
+				MongoCredentials:  "",
 				LabelAll:          false,
 				LogLevel:          phuslog.InfoLevel,
 				K8sRequestTimeout: defaultK8sRequestTimeout,
@@ -151,6 +162,7 @@ func TestGetConfigFromEnvironment(t *testing.T) {
 				LabelSelector:     "app=mongo",
 				Namespace:         "default",
 				Address:           "localhost:27017",
+				MongoCredentials:  "",
 				LabelAll:          false,
 				LogLevel:          phuslog.InfoLevel,
 				K8sRequestTimeout: defaultK8sRequestTimeout,
@@ -667,6 +679,26 @@ func TestGetMongoPrimary(t *testing.T) {
 		_, err := l.getMongoPrimary()
 		require.ErrorContains(t, err, "invalid primary host")
 	})
+}
+
+func TestBuildMongoURI(t *testing.T) {
+	t.Run("without credentials", func(t *testing.T) {
+		assert.Equal(t, "mongodb://localhost:27017", buildMongoURI("localhost:27017", ""))
+	})
+	t.Run("with credentials", func(t *testing.T) {
+		assert.Equal(t, "mongodb://mongoUser@localhost:27017", buildMongoURI("localhost:27017", "mongoUser"))
+	})
+}
+
+func TestSanitizeMongoError(t *testing.T) {
+	baseErr := errors.New("connection failed for mongodb://mongoUser@localhost:27017")
+	sanitized := sanitizeMongoError(baseErr, "mongoUser")
+	require.Error(t, sanitized)
+	assert.NotContains(t, sanitized.Error(), "mongoUser")
+	assert.Contains(t, sanitized.Error(), "[REDACTED]")
+
+	unchanged := sanitizeMongoError(baseErr, "")
+	assert.Equal(t, baseErr, unchanged)
 }
 
 func TestGetKubeClientSet_OutOfClusterError(t *testing.T) {

@@ -149,6 +149,8 @@ spec:
               fieldPath: metadata.namespace
         - name: MONGO_ADDRESS
           value: "localhost:27017"
+        - name: MONGODB_CREDENTIALS
+          value: ""
         - name: K8S_REQUEST_TIMEOUT
           value: "10s"
         - name: LABEL_ALL

@@ -11,7 +11,7 @@ This sidecar detects the current MongoDB replica set primary and labels Kubernet
 
 Every 5 seconds the sidecar:
 
-1. Connects to MongoDB (`MONGO_ADDRESS`, default `localhost:27017`).
+1. Connects to MongoDB (`MONGO_ADDRESS`, default `localhost:27017`, optionally with `MONGODB_CREDENTIALS`).
 2. Detects the primary pod name.
 3. Lists pods in `NAMESPACE` matching `LABEL_SELECTOR`.
 4. Patches labels:
@@ -49,6 +49,7 @@ Environment variables:
 | `LABEL_SELECTOR` | yes | none | Pod label selector (for example `role=mongo`). |
 | `NAMESPACE` | no | `default` | Namespace where pods are listed and patched. |
 | `MONGO_ADDRESS` | no | `localhost:27017` | MongoDB endpoint used for primary detection. |
+| `MONGODB_CREDENTIALS` | no | empty | Credentials inserted into MongoDB URI before `MONGO_ADDRESS` (for example `user:password`). Not logged. |
 | `K8S_REQUEST_TIMEOUT` | no | `10s` | Timeout for Kubernetes list/patch API requests (Go duration format, for example `5s`, `1m`). |
 | `LABEL_ALL` | no | `false` | Boolean. If `true`, non-primary pods get `primary=false`; if `false`, the label is removed. |
 | `DEBUG` | no | `false` | Boolean. If `true`, enables debug logging. |
