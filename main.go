@@ -308,7 +308,7 @@ func mongoCredentialTokens(credentials string) []string {
 	}
 
 	username, password, hasPassword := strings.Cut(credentials, ":")
-	tokens := make([]string, 0, 7)
+	tokens := []string{}
 	seen := map[string]struct{}{}
 	tokens, seen = addToken(seen, tokens, credentials)
 	tokens, seen = addToken(seen, tokens, username)

@@ -691,11 +691,8 @@ func TestBuildMongoURI(t *testing.T) {
 	})
 	t.Run("with username and password", func(t *testing.T) {
 		uri := buildMongoURI("localhost:27017", "mongo.user:p@ss:word")
-		assert.Contains(t, uri, "mongodb://")
-		assert.Contains(t, uri, "mongo.user")
-		assert.Contains(t, uri, "%40")
-		assert.Contains(t, uri, "%3A")
-		assert.Contains(t, uri, "@localhost:27017")
+		expected := "mongodb://mongo.user:" + "p%40ss%3Aword@localhost:27017"
+		assert.Equal(t, expected, uri)
 	})
 }
 
