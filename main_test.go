@@ -700,21 +700,33 @@ func TestBuildMongoURI(t *testing.T) {
 }
 
 func TestSanitizeMongoError(t *testing.T) {
-	credentials := "mongo.user:p@ss:word"
-	baseErr := errors.New(fmt.Sprintf(
-		"connect failed raw=%s uri=%s user=%s",
-		credentials,
-		buildMongoURI("localhost:27017", credentials),
-		"mongo.user",
-	))
-	sanitized := sanitizeMongoError(baseErr, credentials)
-	require.Error(t, sanitized)
-	assert.NotContains(t, sanitized.Error(), credentials)
-	assert.NotContains(t, sanitized.Error(), "mongo.user")
-	assert.Contains(t, sanitized.Error(), "[REDACTED]")
+	t.Run("redacts raw encoded and user-only fragments", func(t *testing.T) {
+		credentials := "mongo.user:p@ss:word"
+		baseErr := fmt.Errorf(
+			"connect failed raw=%s uri=%s user=%s",
+			credentials,
+			buildMongoURI("localhost:27017", credentials),
+			"mongo.user",
+		)
+		sanitized := sanitizeMongoError(baseErr, credentials)
+		require.Error(t, sanitized)
+		assert.NotContains(t, sanitized.Error(), credentials)
+		assert.NotContains(t, sanitized.Error(), "mongo.user")
+		assert.NotContains(t, sanitized.Error(), "p@ss:word")
+		assert.Contains(t, sanitized.Error(), "[REDACTED]")
 
-	unchanged := sanitizeMongoError(baseErr, "")
-	assert.Equal(t, baseErr, unchanged)
+		unchanged := sanitizeMongoError(baseErr, "")
+		assert.Equal(t, baseErr, unchanged)
+	})
+
+	t.Run("redacts username with trailing colon", func(t *testing.T) {
+		credentials := "mongo.user:"
+		baseErr := fmt.Errorf("auth failed for credential fragment=%s", "mongo.user:")
+		sanitized := sanitizeMongoError(baseErr, credentials)
+		require.Error(t, sanitized)
+		assert.NotContains(t, sanitized.Error(), "mongo.user:")
+		assert.Contains(t, sanitized.Error(), "[REDACTED]")
+	})
 }
 
 func TestGetKubeClientSet_OutOfClusterError(t *testing.T) {

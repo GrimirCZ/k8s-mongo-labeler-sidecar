@@ -296,12 +296,29 @@ func mongoCredentialTokens(credentials string) []string {
 		return nil
 	}
 
+	addToken := func(seen map[string]struct{}, tokens []string, token string) ([]string, map[string]struct{}) {
+		if token == "" {
+			return tokens, seen
+		}
+		if _, exists := seen[token]; exists {
+			return tokens, seen
+		}
+		seen[token] = struct{}{}
+		return append(tokens, token), seen
+	}
+
 	username, password, hasPassword := strings.Cut(credentials, ":")
-	tokens := []string{credentials, username}
+	tokens := make([]string, 0, 7)
+	seen := map[string]struct{}{}
+	tokens, seen = addToken(seen, tokens, credentials)
+	tokens, seen = addToken(seen, tokens, username)
 	if hasPassword {
-		tokens = append(tokens, url.UserPassword(username, password).String())
+		tokens, seen = addToken(seen, tokens, username+":")
+		tokens, seen = addToken(seen, tokens, password)
+		tokens, seen = addToken(seen, tokens, url.QueryEscape(password))
+		tokens, seen = addToken(seen, tokens, url.UserPassword(username, password).String())
 	} else {
-		tokens = append(tokens, url.User(username).String())
+		tokens, _ = addToken(seen, tokens, url.User(username).String())
 	}
 	return tokens
 }
