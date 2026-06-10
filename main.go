@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -30,6 +32,7 @@ type Config struct {
 	LabelSelector     string
 	Namespace         string
 	Address           string
+	MongoCredentials  string
 	LabelAll          bool
 	LogLevel          phuslog.Level
 	K8sRequestTimeout time.Duration
@@ -211,6 +214,7 @@ func getConfigFromEnvironment() (*Config, error) {
 		LabelSelector:     labelSelector,
 		Namespace:         envString("NAMESPACE", "default"),
 		Address:           envString("MONGO_ADDRESS", "localhost:27017"),
+		MongoCredentials:  envString("MONGODB_CREDENTIALS", ""),
 		LogLevel:          phuslog.InfoLevel,
 		K8sRequestTimeout: defaultK8sRequestTimeout,
 	}
@@ -270,6 +274,77 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid %s value %q: %w", key, v, err)
 	}
 	return parsed, nil
+}
+
+// buildMongoURI constructs a MongoDB URI from address and optional credentials.
+// credentials may be either "username" or "username:password" and are encoded
+// as URI userinfo.
+func buildMongoURI(address, credentials string) string {
+	uri := &url.URL{
+		Scheme: "mongodb",
+		Host:   address,
+	}
+	if credentials != "" {
+		if username, password, hasPassword := strings.Cut(credentials, ":"); hasPassword {
+			uri.User = url.UserPassword(username, password)
+		} else {
+			uri.User = url.User(credentials)
+		}
+	}
+	return uri.String()
+}
+
+// mongoCredentialTokens returns credential fragments that may appear in MongoDB
+// error text (raw, encoded, and partial forms) and should be redacted.
+func mongoCredentialTokens(credentials string) []string {
+	if credentials == "" {
+		return nil
+	}
+
+	addToken := func(seen map[string]struct{}, tokens []string, token string) ([]string, map[string]struct{}) {
+		if token == "" {
+			return tokens, seen
+		}
+		if _, exists := seen[token]; exists {
+			return tokens, seen
+		}
+		seen[token] = struct{}{}
+		return append(tokens, token), seen
+	}
+
+	username, password, hasPassword := strings.Cut(credentials, ":")
+	tokens := []string{}
+	seen := map[string]struct{}{}
+	tokens, seen = addToken(seen, tokens, credentials)
+	tokens, seen = addToken(seen, tokens, username)
+	if hasPassword {
+		tokens, seen = addToken(seen, tokens, username+":")
+		tokens, seen = addToken(seen, tokens, password)
+		tokens, seen = addToken(seen, tokens, url.QueryEscape(password))
+		tokens, seen = addToken(seen, tokens, url.UserPassword(username, password).String())
+	} else {
+		tokens, _ = addToken(seen, tokens, url.User(username).String())
+	}
+	return tokens
+}
+
+// sanitizeMongoError redacts credential fragments from err text and returns a
+// sanitized error. If no credential fragment is found, it returns err unchanged.
+func sanitizeMongoError(err error, credentials string) error {
+	if err == nil {
+		return err
+	}
+	sanitized := err.Error()
+	for _, token := range mongoCredentialTokens(credentials) {
+		if token == "" {
+			continue
+		}
+		sanitized = strings.ReplaceAll(sanitized, token, "[REDACTED]")
+	}
+	if sanitized == err.Error() {
+		return err
+	}
+	return errors.New(sanitized)
 }
 
 func getKubeClientSet() (*kubernetes.Clientset, error) {
@@ -348,26 +423,38 @@ func (l *Labeler) getMongoPrimary() (string, error) {
 func (l *Labeler) fetchHello(ctx context.Context) (bson.M, error) {
 	if l.mongoClient == nil {
 		clientOptions := options.Client().
-			ApplyURI("mongodb://" + l.Config.Address).
+			ApplyURI(buildMongoURI(l.Config.Address, l.Config.MongoCredentials)).
 			SetDirect(true).
 			SetMinPoolSize(1).
 			SetMaxPoolSize(1)
 		client, err := mongo.Connect(clientOptions)
 		if err != nil {
-			return nil, fmt.Errorf("connect to mongo at %q: %w", l.Config.Address, err)
+			return nil, fmt.Errorf(
+				"connect to mongo at %q: %w",
+				l.Config.Address,
+				sanitizeMongoError(err, l.Config.MongoCredentials),
+			)
 		}
 		l.mongoClient = client
 	}
 
 	if err := l.mongoClient.Ping(ctx, nil); err != nil {
-		return nil, fmt.Errorf("ping mongo at %q: %w", l.Config.Address, err)
+		return nil, fmt.Errorf(
+			"ping mongo at %q: %w",
+			l.Config.Address,
+			sanitizeMongoError(err, l.Config.MongoCredentials),
+		)
 	}
 
 	var hello bson.M
 	if err := l.mongoClient.Database("admin").
 		RunCommand(ctx, bson.D{{Key: "hello", Value: 1}}).
 		Decode(&hello); err != nil {
-		return nil, fmt.Errorf("run hello command on mongo at %q: %w", l.Config.Address, err)
+		return nil, fmt.Errorf(
+			"run hello command on mongo at %q: %w",
+			l.Config.Address,
+			sanitizeMongoError(err, l.Config.MongoCredentials),
+		)
 	}
 	return hello, nil
 }

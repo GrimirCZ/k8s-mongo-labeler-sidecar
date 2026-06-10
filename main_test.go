@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,15 @@ type envState struct {
 func setConfigEnv(t *testing.T, env map[string]string) {
 	t.Helper()
 
-	keys := []string{"LABEL_SELECTOR", "NAMESPACE", "MONGO_ADDRESS", "LABEL_ALL", "DEBUG", "K8S_REQUEST_TIMEOUT"}
+	keys := []string{
+		"LABEL_SELECTOR",
+		"NAMESPACE",
+		"MONGO_ADDRESS",
+		"MONGODB_CREDENTIALS",
+		"LABEL_ALL",
+		"DEBUG",
+		"K8S_REQUEST_TIMEOUT",
+	}
 	original := make(map[string]envState, len(keys))
 	for _, key := range keys {
 		value, ok := os.LookupEnv(key)
@@ -100,6 +109,7 @@ func TestGetConfigFromEnvironment(t *testing.T) {
 				"LABEL_SELECTOR":      "app=mongo",
 				"NAMESPACE":           "test-namespace",
 				"MONGO_ADDRESS":       "mongo:27017",
+				"MONGODB_CREDENTIALS": "user:pass",
 				"LABEL_ALL":           "true",
 				"DEBUG":               "true",
 				"K8S_REQUEST_TIMEOUT": "7s",
@@ -108,6 +118,7 @@ func TestGetConfigFromEnvironment(t *testing.T) {
 				LabelSelector:     "app=mongo",
 				Namespace:         "test-namespace",
 				Address:           "mongo:27017",
+				MongoCredentials:  "user:pass",
 				LabelAll:          true,
 				LogLevel:          phuslog.DebugLevel,
 				K8sRequestTimeout: 7 * time.Second,
@@ -134,6 +145,7 @@ func TestGetConfigFromEnvironment(t *testing.T) {
 				LabelSelector:     "app=mongo",
 				Namespace:         "default",
 				Address:           "localhost:27017",
+				MongoCredentials:  "",
 				LabelAll:          false,
 				LogLevel:          phuslog.InfoLevel,
 				K8sRequestTimeout: defaultK8sRequestTimeout,
@@ -151,6 +163,7 @@ func TestGetConfigFromEnvironment(t *testing.T) {
 				LabelSelector:     "app=mongo",
 				Namespace:         "default",
 				Address:           "localhost:27017",
+				MongoCredentials:  "",
 				LabelAll:          false,
 				LogLevel:          phuslog.InfoLevel,
 				K8sRequestTimeout: defaultK8sRequestTimeout,
@@ -666,6 +679,50 @@ func TestGetMongoPrimary(t *testing.T) {
 		}
 		_, err := l.getMongoPrimary()
 		require.ErrorContains(t, err, "invalid primary host")
+	})
+}
+
+func TestBuildMongoURI(t *testing.T) {
+	t.Run("without credentials", func(t *testing.T) {
+		assert.Equal(t, "mongodb://localhost:27017", buildMongoURI("localhost:27017", ""))
+	})
+	t.Run("with username only", func(t *testing.T) {
+		assert.Equal(t, "mongodb://mongoUser@localhost:27017", buildMongoURI("localhost:27017", "mongoUser"))
+	})
+	t.Run("with username and password", func(t *testing.T) {
+		uri := buildMongoURI("localhost:27017", "mongo.user:p@ss:word")
+		expected := "mongodb://mongo.user:" + "p%40ss%3Aword@localhost:27017"
+		assert.Equal(t, expected, uri)
+	})
+}
+
+func TestSanitizeMongoError(t *testing.T) {
+	t.Run("redacts raw encoded and user-only fragments", func(t *testing.T) {
+		credentials := "mongo.user:p@ss:word"
+		baseErr := fmt.Errorf(
+			"connect failed raw=%s uri=%s user=%s",
+			credentials,
+			buildMongoURI("localhost:27017", credentials),
+			"mongo.user",
+		)
+		sanitized := sanitizeMongoError(baseErr, credentials)
+		require.Error(t, sanitized)
+		assert.NotContains(t, sanitized.Error(), credentials)
+		assert.NotContains(t, sanitized.Error(), "mongo.user")
+		assert.NotContains(t, sanitized.Error(), "p@ss:word")
+		assert.Contains(t, sanitized.Error(), "[REDACTED]")
+
+		unchanged := sanitizeMongoError(baseErr, "")
+		assert.Equal(t, baseErr, unchanged)
+	})
+
+	t.Run("redacts username with trailing colon", func(t *testing.T) {
+		credentials := "mongo.user:"
+		baseErr := fmt.Errorf("auth failed for credential fragment=%s", "mongo.user:")
+		sanitized := sanitizeMongoError(baseErr, credentials)
+		require.Error(t, sanitized)
+		assert.NotContains(t, sanitized.Error(), "mongo.user:")
+		assert.Contains(t, sanitized.Error(), "[REDACTED]")
 	})
 }
 
