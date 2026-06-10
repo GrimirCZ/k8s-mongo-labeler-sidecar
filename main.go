@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -276,17 +277,46 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 }
 
 func buildMongoURI(address, credentials string) string {
-	if credentials == "" {
-		return "mongodb://" + address
+	uri := &url.URL{
+		Scheme: "mongodb",
+		Host:   address,
 	}
-	return "mongodb://" + credentials + "@" + address
+	if credentials != "" {
+		if username, password, hasPassword := strings.Cut(credentials, ":"); hasPassword {
+			uri.User = url.UserPassword(username, password)
+		} else {
+			uri.User = url.User(credentials)
+		}
+	}
+	return uri.String()
+}
+
+func mongoCredentialTokens(credentials string) []string {
+	if credentials == "" {
+		return nil
+	}
+
+	username, password, hasPassword := strings.Cut(credentials, ":")
+	tokens := []string{credentials, username}
+	if hasPassword {
+		tokens = append(tokens, url.UserPassword(username, password).String())
+	} else {
+		tokens = append(tokens, url.User(username).String())
+	}
+	return tokens
 }
 
 func sanitizeMongoError(err error, credentials string) error {
 	if err == nil || credentials == "" {
 		return err
 	}
-	sanitized := strings.ReplaceAll(err.Error(), credentials, "[REDACTED]")
+	sanitized := err.Error()
+	for _, token := range mongoCredentialTokens(credentials) {
+		if token == "" {
+			continue
+		}
+		sanitized = strings.ReplaceAll(sanitized, token, "[REDACTED]")
+	}
 	if sanitized == err.Error() {
 		return err
 	}

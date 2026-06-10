@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -685,16 +686,31 @@ func TestBuildMongoURI(t *testing.T) {
 	t.Run("without credentials", func(t *testing.T) {
 		assert.Equal(t, "mongodb://localhost:27017", buildMongoURI("localhost:27017", ""))
 	})
-	t.Run("with credentials", func(t *testing.T) {
+	t.Run("with username only", func(t *testing.T) {
 		assert.Equal(t, "mongodb://mongoUser@localhost:27017", buildMongoURI("localhost:27017", "mongoUser"))
+	})
+	t.Run("with username and password", func(t *testing.T) {
+		uri := buildMongoURI("localhost:27017", "mongo.user:p@ss:word")
+		assert.Contains(t, uri, "mongodb://")
+		assert.Contains(t, uri, "mongo.user")
+		assert.Contains(t, uri, "%40")
+		assert.Contains(t, uri, "%3A")
+		assert.Contains(t, uri, "@localhost:27017")
 	})
 }
 
 func TestSanitizeMongoError(t *testing.T) {
-	baseErr := errors.New("connection failed for mongodb://mongoUser@localhost:27017")
-	sanitized := sanitizeMongoError(baseErr, "mongoUser")
+	credentials := "mongo.user:p@ss:word"
+	baseErr := errors.New(fmt.Sprintf(
+		"connect failed raw=%s uri=%s user=%s",
+		credentials,
+		buildMongoURI("localhost:27017", credentials),
+		"mongo.user",
+	))
+	sanitized := sanitizeMongoError(baseErr, credentials)
 	require.Error(t, sanitized)
-	assert.NotContains(t, sanitized.Error(), "mongoUser")
+	assert.NotContains(t, sanitized.Error(), credentials)
+	assert.NotContains(t, sanitized.Error(), "mongo.user")
 	assert.Contains(t, sanitized.Error(), "[REDACTED]")
 
 	unchanged := sanitizeMongoError(baseErr, "")
